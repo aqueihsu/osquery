@@ -23,4 +23,5 @@ ENV HOME /root
 WORKDIR /root
 
 # Define default command.
-CMD ["bash"]
+CMD tail -f /dev/null
+# CMD cat /proc/1/status | grep Name
