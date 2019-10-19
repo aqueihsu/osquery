@@ -25,8 +25,9 @@
 #include <osquery/logger.h>
 #include <osquery/tables.h>
 
-#include "osquery/utils/conversions/split.h"
-#include "osquery/utils/conversions/tryto.h"
+#include <osquery/utils/conversions/split.h>
+#include <osquery/utils/conversions/tryto.h>
+#include <osquery/utils/system/uptime.h>
 
 namespace osquery {
 namespace tables {
@@ -164,14 +165,8 @@ void genHostProcessMap(const std::string& pid, QueryData& results) {
     }
 
     r["permissions"] = fields[1];
-    try {
-      auto offset = std::stoll(fields[2], nullptr, 16);
-      r["offset"] = (offset != 0) ? BIGINT(offset) : r["start"];
-
-    } catch (const std::exception& e) {
-      // Value was out of range or could not be interpreted as a hex long long.
-      r["offset"] = "-1";
-    }
+    auto offset = tryTo<long long>(fields[2], 16);
+    r["offset"] = BIGINT((offset) ? offset.take() : -1);
     r["device"] = fields[3];
     r["inode"] = fields[4];
 
@@ -239,11 +234,7 @@ SimpleHostProcStat::SimpleHostProcStat(const std::string& pid) {
     this->system_time = details.at(12);
     this->nice = details.at(16);
     this->threads = details.at(17);
-    try {
-      this->start_time = TEXT(AS_LITERAL(BIGINT_LITERAL, details.at(19)) / 100);
-    } catch (const boost::bad_lexical_cast& e) {
-      this->start_time = "-1";
-    }
+    this->start_time = details.at(19); 
   }
 
   // /proc/N/status may be not available, or readable by this user.
@@ -382,7 +373,9 @@ int getOnHostDisk(const std::string& pid, std::string& path) {
   }
 }
 
-void genHostProcess(const std::string& pid, QueryData& results) {
+void genHostProcess(const std::string& pid,
+                    long system_boot_time,
+                    QueryData& results) {
   // Parse the process stat and status.
   SimpleHostProcStat proc_stat(pid);
   // Parse the process io
@@ -428,7 +421,13 @@ void genHostProcess(const std::string& pid, QueryData& results) {
   r["system_time"] = std::to_string(sys_time * ms_in_1_clk_tck);
   ;
 
-  r["start_time"] = proc_stat.start_time;
+  auto proc_start_time_exp = tryTo<long>(proc_stat.start_time);
+  if (proc_start_time_exp.isValue() && system_boot_time > 0) {
+    r["start_time"] = INTEGER(system_boot_time + proc_start_time_exp.take() /
+                                                     sysconf(_SC_CLK_TCK));
+  } else {
+    r["start_time"] = "-1";
+  }
 
   if (!proc_io.status.ok()) {
     // /proc/<pid>/io can require root to access, so don't fail if we can't
@@ -449,10 +448,14 @@ void genHostProcess(const std::string& pid, QueryData& results) {
 
 QueryData genHostProcesses(QueryContext& context) {
   QueryData results;
+  auto system_boot_time = getUptime();
+  if (system_boot_time > 0) {		
+    system_boot_time = std::time(nullptr) - system_boot_time;		
+  }
 
   auto pidlist = getHostProcList(context);
   for (const auto& pid : pidlist) {
-    genHostProcess(pid, results);
+    genHostProcess(pid, system_boot_time, results);
   }
 
   return results;
