@@ -22,6 +22,7 @@
 
 namespace osquery {
 const std::string kLinuxProcPath = "/proc";
+const std::string kLinuxHostProcPath = "/opt/osq/proc";
 
 struct SocketInfo final {
   std::string socket;
@@ -77,7 +78,16 @@ Status procGetProcessNamespaces(
     ProcessNamespaceList& namespace_list,
     std::vector<std::string> namespaces = std::vector<std::string>());
 
+Status procGetHostProcessNamespaces(
+    const std::string& process_id,
+    ProcessNamespaceList& namespace_list,
+    std::vector<std::string> namespaces = std::vector<std::string>());
+
 Status procReadDescriptor(const std::string& process,
+                          const std::string& descriptor,
+                          std::string& result);
+
+Status procReadHostDescriptor(const std::string& process,
                           const std::string& descriptor,
                           std::string& result);
 
@@ -167,6 +177,36 @@ Status procEnumerateProcesses(UserData& user_data,
   return Status(0);
 }
 
+template <typename UserData>
+Status procEnumerateHostProcesses(UserData& user_data,
+                              bool (*callback)(const std::string&, UserData&)) {
+  boost::filesystem::directory_iterator it(kLinuxHostProcPath), end;
+
+  try {
+    for (; it != end; ++it) {
+      if (!boost::filesystem::is_directory(it->status())) {
+        continue;
+      }
+
+      // See #792: std::regex is incomplete until GCC 4.9
+      const auto& pid = it->path().leaf().string();
+      if (std::atoll(pid.data()) <= 0) {
+        continue;
+      }
+
+      bool ret = callback(pid, user_data);
+      if (ret == false) {
+        break;
+      }
+    }
+  } catch (const boost::filesystem::filesystem_error& e) {
+    VLOG(1) << "Exception iterating Linux processes: " << e.what();
+    return Status(1, e.what());
+  }
+
+  return Status(0);
+}
+
 /**
  * @brief Enumerate all file descriptors of a certain process identified by its
  * pid by listing files under /proc/<pid>/fd and execute a callback for each one
@@ -199,6 +239,41 @@ Status procEnumerateProcessDescriptors(const std::string& pid,
 
       std::string link;
       Status status = procReadDescriptor(pid, fd, link);
+      if (!status.ok()) {
+        VLOG(1) << "Failed to read the link for file descriptor " << fd
+                << " of pid " << pid << ". Data might be incomplete.";
+      }
+
+      bool ret = callback(pid, fd, link, user_data);
+      if (ret == false) {
+        break;
+      }
+    }
+  } catch (boost::filesystem::filesystem_error& e) {
+    VLOG(1) << "Exception iterating process file descriptors: " << e.what();
+    return Status(1, e.what());
+  }
+
+  return Status(0);
+}
+
+template <typename UserData>
+Status procEnumerateHostProcessDescriptors(const std::string& pid,
+                                       UserData& user_data,
+                                       bool (*callback)(const std::string& pid,
+                                                        const std::string& fd,
+                                                        const std::string& link,
+                                                        UserData& user_data)) {
+  std::string descriptors_path = kLinuxHostProcPath + "/" + pid + "/fd";
+
+  try {
+    boost::filesystem::directory_iterator it(descriptors_path), end;
+
+    for (; it != end; ++it) {
+      auto fd = it->path().leaf().string();
+
+      std::string link;
+      Status status = procReadHostDescriptor(pid, fd, link);
       if (!status.ok()) {
         VLOG(1) << "Failed to read the link for file descriptor " << fd
                 << " of pid " << pid << ". Data might be incomplete.";

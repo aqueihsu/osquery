@@ -82,6 +82,31 @@ Status procGetProcessNamespaces(const std::string& process_id,
   return Status::success();
 }
 
+Status procGetHostProcessNamespaces(const std::string& process_id,
+                                ProcessNamespaceList& namespace_list,
+                                std::vector<std::string> namespaces) {
+  namespace_list.clear();
+
+  if (namespaces.empty()) {
+    namespaces = kUserNamespaceList;
+  }
+
+  auto process_namespace_root = kLinuxHostProcPath + "/" + process_id + "/ns";
+
+  for (const auto& namespace_name : namespaces) {
+    ino_t namespace_inode;
+    auto status = procGetNamespaceInode(
+        namespace_inode, namespace_name, process_namespace_root);
+    if (!status.ok()) {
+      continue;
+    }
+
+    namespace_list[namespace_name] = namespace_inode;
+  }
+
+  return Status(0, "OK");
+}
+
 std::string procDecodeAddressFromHex(const std::string& encoded_address,
                                      int family) {
   char addr_buffer[INET6_ADDRSTRLEN] = {0};
@@ -310,6 +335,16 @@ Status procProcesses(std::set<std::string>& processes) {
   return procEnumerateProcesses<decltype(processes)>(processes, callback);
 }
 
+Status procHostProcesses(std::set<std::string>& processes) {
+  auto callback = [](const std::string& pid,
+                     std::set<std::string>& processes) -> bool {
+    processes.insert(pid);
+    return true;
+  };
+
+  return procEnumerateHostProcesses<decltype(processes)>(processes, callback);
+}
+
 Status procDescriptors(const std::string& process,
                        std::map<std::string, std::string>& descriptors) {
   auto callback = [](const std::string& pid,
@@ -324,10 +359,40 @@ Status procDescriptors(const std::string& process,
       process, descriptors, callback);
 }
 
+Status procHostDescriptors(const std::string& process,
+                       std::map<std::string, std::string>& descriptors) {
+  auto callback = [](const std::string& pid,
+                     const std::string& fd,
+                     const std::string& link_name,
+                     std::map<std::string, std::string>& descriptors) -> bool {
+
+    descriptors[fd] = link_name;
+    return true;
+  };
+
+  return procEnumerateHostProcessDescriptors<decltype(descriptors)>(
+      process, descriptors, callback);
+}
+
 Status procReadDescriptor(const std::string& process,
                           const std::string& descriptor,
                           std::string& result) {
   auto link = kLinuxProcPath + "/" + process + "/fd/" + descriptor;
+
+  char result_path[PATH_MAX] = {0};
+  auto size = readlink(link.c_str(), result_path, sizeof(result_path) - 1);
+  if (size >= 0) {
+    result = std::string(result_path);
+    return Status(0);
+  } else {
+    return Status(1, "Could not read path");
+  }
+}
+
+Status procReadHostDescriptor(const std::string& process,
+                          const std::string& descriptor,
+                          std::string& result) {
+  auto link = kLinuxHostProcPath + "/" + process + "/fd/" + descriptor;
 
   char result_path[PATH_MAX] = {0};
   auto size = readlink(link.c_str(), result_path, sizeof(result_path) - 1);

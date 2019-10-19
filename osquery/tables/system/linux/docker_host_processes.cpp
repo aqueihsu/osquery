@@ -21,11 +21,12 @@
 #include <boost/regex.hpp>
 
 #include <osquery/core.h>
-#include <osquery/filesystem.h>
+#include <osquery/filesystem/filesystem.h>
 #include <osquery/logger.h>
 #include <osquery/tables.h>
 
-#include "osquery/core/conversions.h"
+#include "osquery/utils/conversions/split.h"
+#include "osquery/utils/conversions/tryto.h"
 
 namespace osquery {
 namespace tables {
@@ -253,7 +254,7 @@ SimpleHostProcStat::SimpleHostProcStat(const std::string& pid) {
 
   for (const auto& line : osquery::split(content, "\n")) {
     // Status lines are formatted: Key: Value....\n.
-    auto detail = osquery::split(line, ":", 1);
+    auto detail = osquery::split(line, ':', 1);
     if (detail.size() != 2) {
       continue;
     }
@@ -313,7 +314,7 @@ SimpleHostProcIo::SimpleHostProcIo(const std::string& pid) {
 
   for (const auto& line : osquery::split(content, "\n")) {
     // IO lines are formatted: Key: Value....\n.
-    auto detail = osquery::split(line, ":", 1);
+    auto detail = osquery::split(line, ':', 1);
     if (detail.size() != 2) {
       continue;
     }
@@ -434,12 +435,10 @@ void genHostProcess(const std::string& pid, QueryData& results) {
     VLOG(1) << proc_io.status.getMessage();
   } else {
     r["disk_bytes_read"] = proc_io.read_bytes;
-    long long write_bytes = 0;
-    long long cancelled_write_bytes = 0;
 
-    osquery::safeStrtoll(proc_io.write_bytes, 10, write_bytes);
-    osquery::safeStrtoll(
-        proc_io.cancelled_write_bytes, 10, cancelled_write_bytes);
+    long long write_bytes = tryTo<long long>(proc_io.write_bytes).takeOr(0ll);
+    long long cancelled_write_bytes =
+        tryTo<long long>(proc_io.cancelled_write_bytes).takeOr(0ll);
 
     r["disk_bytes_written"] =
         std::to_string(write_bytes - cancelled_write_bytes);

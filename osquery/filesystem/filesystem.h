@@ -312,6 +312,8 @@ Status parseJSONContent(const std::string& content,
  */
 Status procProcesses(std::set<std::string>& processes);
 
+Status procHostProcesses(std::set<std::string>& processes);
+
 /**
  * @brief Iterate over a `/proc` process's descriptors, return a list of fds.
  *

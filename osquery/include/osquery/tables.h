@@ -127,7 +127,8 @@ inline std::string __sqliteField(const std::string& source) noexcept {
 #define UNSIGNED_BIGINT_LITERAL uint64_t
 /// See the literal type documentation for TEXT_LITERAL.
 #define DOUBLE_LITERAL double
-
+/// Cast an SQLite affinity type to the literal type.
+#define AS_LITERAL(literal, value) boost::lexical_cast<literal>(value)
 /**
  * @brief A ConstraintOperator is applied in an query predicate.
  *

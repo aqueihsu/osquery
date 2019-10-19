@@ -69,6 +69,7 @@ function(generateOsqueryTablesSystemSystemtable)
       linux/portage.cpp
       linux/process_open_files.cpp
       linux/processes.cpp
+      linux/docker_host_processes.cpp
       linux/rpm_packages.cpp
       linux/shadow.cpp
       linux/shared_memory.cpp
