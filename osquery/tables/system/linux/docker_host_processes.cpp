@@ -33,6 +33,8 @@
 namespace osquery {
 namespace tables {
 
+// TOOD (khsu): pulling in getHostProcList to call procHostProcesses
+
 const std::string& HOST_PROC_PATH = "/opt/osq/proc/";
 
 void genHostProcess(const std::string& pid,
