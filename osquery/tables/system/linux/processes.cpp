@@ -25,6 +25,7 @@
 #include <osquery/sql/dynamic_table_row.h>
 #include <osquery/tables.h>
 
+#include <osquery/tables/system/linux/processes.h>
 #include <osquery/utils/conversions/split.h>
 #include <osquery/utils/system/uptime.h>
 
@@ -33,65 +34,13 @@
 namespace osquery {
 namespace tables {
 
-const int kMSIn1CLKTCK = (1000 / sysconf(_SC_CLK_TCK));
-
-inline std::string getProcAttr(const std::string& attr,
-                               const std::string& pid) {
-  return "/proc/" + pid + "/" + attr;
-}
-
-inline std::string readProcCMDLine(const std::string& pid) {
-  auto attr = getProcAttr("cmdline", pid);
-
-  std::string content;
-  readFile(attr, content);
-  // Remove \0 delimiters.
-  std::replace_if(content.begin(),
-                  content.end(),
-                  [](const char& c) { return c == 0; },
-                  ' ');
-  // Remove trailing delimiter.
-  boost::algorithm::trim(content);
-  return content;
-}
-
-inline std::string readProcLink(const std::string& attr,
-                                const std::string& pid) {
-  // The exe is a symlink to the binary on-disk.
-  auto attr_path = getProcAttr(attr, pid);
-
-  std::string result = "";
-  struct stat sb;
-  if (lstat(attr_path.c_str(), &sb) != -1) {
-    // Some symlinks may report 'st_size' as zero
-    // Use PATH_MAX as best guess
-    // For cases when 'st_size' is not zero but smaller than
-    // PATH_MAX we will still use PATH_MAX to minimize chance
-    // of output trucation during race condition
-    ssize_t buf_size = sb.st_size < PATH_MAX ? PATH_MAX : sb.st_size;
-    // +1 for \0, since readlink does not append a null
-    char* linkname = static_cast<char*>(malloc(buf_size + 1));
-    ssize_t r = readlink(attr_path.c_str(), linkname, buf_size);
-
-    if (r > 0) { // Success check
-      // r may not be equal to buf_size
-      // if r == buf_size there was race condition
-      // and link is longer than buf_size and because of this
-      // truncated
-      linkname[r] = '\0';
-      result = std::string(linkname);
-    }
-    free(linkname);
-  }
-
-  return result;
-}
+const std::string PROC_PATH = "/proc/";
 
 // In the case where the linked binary path ends in " (deleted)", and a file
 // actually exists at that path, check whether the inode of that file matches
 // the inode of the mapped file in /proc/%pid/maps
-Status deletedMatchesInode(const std::string& path, const std::string& pid) {
-  const std::string maps_path = getProcAttr("maps", pid);
+Status deletedMatchesInode(const std::string& proc_path, const std::string& path, const std::string& pid) {
+  const std::string maps_path = getProcAttr(proc_path, "maps", pid);
   std::string maps_contents;
   auto s = osquery::readFile(maps_path, maps_contents);
   if (!s.ok()) {
@@ -120,12 +69,12 @@ Status deletedMatchesInode(const std::string& path, const std::string& pid) {
   }
 }
 
-std::set<std::string> getProcList(const QueryContext& context) {
+std::set<std::string> getProcList(const std::string& proc_path, const QueryContext& context) {
   std::set<std::string> pidlist;
   if (context.constraints.count("pid") > 0 &&
       context.constraints.at("pid").exists(EQUALS)) {
     for (const auto& pid : context.constraints.at("pid").getAll(EQUALS)) {
-      if (isDirectory("/proc/" + pid)) {
+      if (isDirectory(proc_path + pid)) {
         pidlist.insert(pid);
       }
     }
@@ -136,8 +85,8 @@ std::set<std::string> getProcList(const QueryContext& context) {
   return pidlist;
 }
 
-void genProcessEnvironment(const std::string& pid, QueryData& results) {
-  auto attr = getProcAttr("environ", pid);
+void genProcessEnvironment(const std::string& proc_path, const std::string& pid, QueryData& results) {
+  auto attr = getProcAttr(proc_path, "environ", pid);
 
   std::string content;
   readFile(attr, content);
@@ -157,8 +106,8 @@ void genProcessEnvironment(const std::string& pid, QueryData& results) {
   }
 }
 
-void genProcessMap(const std::string& pid, QueryData& results) {
-  auto map = getProcAttr("maps", pid);
+void genProcessMap(const std::string& proc_path, const std::string& pid, QueryData& results) {
+  auto map = getProcAttr(proc_path, "maps", pid);
 
   std::string content;
   readFile(map, content);
@@ -200,38 +149,9 @@ void genProcessMap(const std::string& pid, QueryData& results) {
   }
 }
 
-/**
- *  Output from string parsing /proc/<pid>/status.
- */
-struct SimpleProcStat : private boost::noncopyable {
- public:
-  std::string name;
-  std::string real_uid;
-  std::string real_gid;
-  std::string effective_uid;
-  std::string effective_gid;
-  std::string saved_uid;
-  std::string saved_gid;
-  std::string resident_size;
-  std::string total_size;
-  std::string state;
-  std::string parent;
-  std::string group;
-  std::string nice;
-  std::string threads;
-  std::string user_time;
-  std::string system_time;
-  std::string start_time;
-
-  /// For errors processing proc data.
-  Status status;
-
-  explicit SimpleProcStat(const std::string& pid);
-};
-
-SimpleProcStat::SimpleProcStat(const std::string& pid) {
+SimpleProcStat::SimpleProcStat(const std::string& proc_path, const std::string& pid) {
   std::string content;
-  if (readFile(getProcAttr("stat", pid), content).ok()) {
+  if (readFile(getProcAttr(proc_path, "stat", pid), content).ok()) {
     auto start = content.find_last_of(")");
     // Start parsing stats from ") <MODE>..."
     if (start == std::string::npos || content.size() <= start + 2) {
@@ -256,7 +176,7 @@ SimpleProcStat::SimpleProcStat(const std::string& pid) {
   }
 
   // /proc/N/status may be not available, or readable by this user.
-  if (!readFile(getProcAttr("status", pid), content).ok()) {
+  if (!readFile(getProcAttr(proc_path, "status", pid), content).ok()) {
     status = Status(1, "Cannot read /proc/status");
     return;
   }
@@ -298,24 +218,9 @@ SimpleProcStat::SimpleProcStat(const std::string& pid) {
   }
 }
 
-/**
- * Output from string parsing /proc/<pid>/io.
- */
-struct SimpleProcIo : private boost::noncopyable {
- public:
-  std::string read_bytes;
-  std::string write_bytes;
-  std::string cancelled_write_bytes;
-
-  /// For errors processing proc data.
-  Status status;
-
-  explicit SimpleProcIo(const std::string& pid);
-};
-
-SimpleProcIo::SimpleProcIo(const std::string& pid) {
+SimpleProcIo::SimpleProcIo(const std::string& proc_path, const std::string& pid) {
   std::string content;
-  if (!readFile(getProcAttr("io", pid), content).ok()) {
+  if (!readFile(getProcAttr(proc_path, "io", pid), content).ok()) {
     status = Status(
         1, "Cannot read /proc/" + pid + "/io (is osquery running as root?)");
     return;
@@ -353,7 +258,7 @@ SimpleProcIo::SimpleProcIo(const std::string& pid) {
  *             to contain the (deleted) suffix, it will be removed.
  * @return A tristate -1 error, 1 yes, 0 nope.
  */
-int getOnDisk(const std::string& pid, std::string& path) {
+int getOnDisk(const std::string& proc_path, const std::string& pid, std::string& path) {
   if (path.empty()) {
     return -1;
   }
@@ -375,7 +280,7 @@ int getOnDisk(const std::string& pid, std::string& path) {
   // process is actually running from a binary file ending with
   // " (deleted)". See #1607
   std::string maps_contents;
-  Status deleted = deletedMatchesInode(path, pid);
+  Status deleted = deletedMatchesInode(proc_path, path, pid);
   if (deleted.getCode() == -1) {
     LOG(ERROR) << deleted.getMessage();
     return -1;
@@ -395,9 +300,9 @@ void genProcess(const std::string& pid,
                 long system_boot_time,
                 TableRows& results) {
   // Parse the process stat and status.
-  SimpleProcStat proc_stat(pid);
+  SimpleProcStat proc_stat(PROC_PATH, pid);
   // Parse the process io
-  SimpleProcIo proc_io(pid);
+  SimpleProcIo proc_io(PROC_PATH, pid);
 
   if (!proc_stat.status.ok()) {
     VLOG(1) << proc_stat.status.getMessage() << " for pid " << pid;
@@ -407,16 +312,16 @@ void genProcess(const std::string& pid,
   auto r = make_table_row();
   r["pid"] = pid;
   r["parent"] = proc_stat.parent;
-  r["path"] = readProcLink("exe", pid);
+  r["path"] = readProcLink(PROC_PATH, "exe", pid);
   r["name"] = proc_stat.name;
   r["pgroup"] = proc_stat.group;
   r["state"] = proc_stat.state;
   r["nice"] = proc_stat.nice;
   r["threads"] = proc_stat.threads;
   // Read/parse cmdline arguments.
-  r["cmdline"] = readProcCMDLine(pid);
-  r["cwd"] = readProcLink("cwd", pid);
-  r["root"] = readProcLink("root", pid);
+  r["cmdline"] = readProcCMDLine(PROC_PATH, pid);
+  r["cwd"] = readProcLink(PROC_PATH, "cwd", pid);
+  r["root"] = readProcLink(PROC_PATH, "root", pid);
   r["uid"] = proc_stat.real_uid;
   r["euid"] = proc_stat.effective_uid;
   r["suid"] = proc_stat.saved_uid;
@@ -424,7 +329,7 @@ void genProcess(const std::string& pid,
   r["egid"] = proc_stat.effective_gid;
   r["sgid"] = proc_stat.saved_gid;
 
-  r["on_disk"] = INTEGER(getOnDisk(pid, r["path"]));
+  r["on_disk"] = INTEGER(getOnDisk(PROC_PATH, pid, r["path"]));
 
   // size/memory information
   r["wired_size"] = "0"; // No support for unpagable counters in linux.
@@ -486,7 +391,7 @@ TableRows genProcesses(QueryContext& context) {
     system_boot_time = std::time(nullptr) - system_boot_time;
   }
 
-  auto pidlist = getProcList(context);
+  auto pidlist = getProcList(PROC_PATH, context);
   for (const auto& pid : pidlist) {
     genProcess(pid, system_boot_time, results);
   }
@@ -497,9 +402,9 @@ TableRows genProcesses(QueryContext& context) {
 QueryData genProcessEnvs(QueryContext& context) {
   QueryData results;
 
-  auto pidlist = getProcList(context);
+  auto pidlist = getProcList(PROC_PATH, context);
   for (const auto& pid : pidlist) {
-    genProcessEnvironment(pid, results);
+    genProcessEnvironment(PROC_PATH, pid, results);
   }
 
   return results;
@@ -508,9 +413,9 @@ QueryData genProcessEnvs(QueryContext& context) {
 QueryData genProcessMemoryMap(QueryContext& context) {
   QueryData results;
 
-  auto pidlist = getProcList(context);
+  auto pidlist = getProcList(PROC_PATH, context);
   for (const auto& pid : pidlist) {
-    genProcessMap(pid, results);
+    genProcessMap(PROC_PATH, pid, results);
   }
 
   return results;
@@ -519,7 +424,7 @@ QueryData genProcessMemoryMap(QueryContext& context) {
 QueryData genProcessNamespaces(QueryContext& context) {
   QueryData results;
 
-  const auto pidlist = getProcList(context);
+  const auto pidlist = getProcList(PROC_PATH, context);
   for (const auto& pid : pidlist) {
     genNamespaces(pid, results);
   }

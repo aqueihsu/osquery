@@ -280,6 +280,7 @@ function(generateOsqueryTablesSystemSystemtable)
 
   if(DEFINED PLATFORM_LINUX)
     list(APPEND platform_public_header_files
+      linux/processes.h
       linux/md_tables.h
       linux/pci_devices.h
       linux/smbios_utils.h
