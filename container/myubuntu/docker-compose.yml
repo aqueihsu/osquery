@@ -10,3 +10,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/opt/osq/proc:ro
       - /dev/pts:/opt/osq/dev/pts:ro
+
+  myubuntu2:
+    image: myubuntu
+    privileged: true
+    volumes:
+      - ~/Projects/osquery:/src/osquery
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/opt/osq/proc:ro
+      - /dev/pts:/opt/osq/dev/pts:ro

@@ -847,10 +847,18 @@ QueryData genContainerStats(QueryContext& context) {
           BIGINT(container.get<uint64_t>("memory_stats.max_usage", 0));
       r["memory_limit"] =
           BIGINT(container.get<uint64_t>("memory_stats.limit", 0));
-      r["network_rx_bytes"] =
-          getNetworkBytes(container.get_child("networks"), "rx_bytes");
-      r["network_tx_bytes"] =
-          getNetworkBytes(container.get_child("networks"), "tx_bytes");
+      try {
+        r["network_rx_bytes"] = getNetworkBytes(container.get_child("networks"), "rx_bytes");
+      } catch (const pt::ptree_error& e) {
+        r["network_rx_bytes"] = -1;    
+        VLOG(1) << e.what();
+      }
+      try {
+        r["network_tx_bytes"] = getNetworkBytes(container.get_child("networks"), "tx_bytes");
+      } catch (const pt::ptree_error& e) {
+        r["network_tx_bytes"] = -1;
+        VLOG(1) << e.what();
+      }
       results.push_back(r);
     } catch (const pt::ptree_error& e) {
       VLOG(1) << "Error getting docker container stats " << id << ": "
@@ -970,7 +978,7 @@ QueryData genVolumeLabels(QueryContext& context) {
 QueryData genImages(QueryContext& context) {
   QueryData results;
   pt::ptree tree;
-  Status s = dockerApi("/images/json", tree);
+  Status s = dockerApi("/images/json?all=1", tree);
   if (!s.ok()) {
     VLOG(1) << "Error getting docker images: " << s.what();
     return results;
@@ -994,6 +1002,83 @@ QueryData genImages(QueryContext& context) {
         tags.append(tag.second.data());
       }
       r["tags"] = tags;
+
+      std::string tag = tags.substr(0, tags.find(":"));
+      std::string digests;
+      std::stringstream ss;
+      pt::ptree trgt_tree;
+      pt::ptree root_tree;
+      std::string signatures;
+      std::string root_signatures;
+      std::string rep_signatures;
+
+      for (const auto& digest : node.get_child("RepoDigests")) {
+        if (!digests.empty()) {
+          digests.append(",");
+        }
+        std::string image_id = digest.second.data();
+        image_id = image_id.substr(image_id.find("@sha256:")+8);
+        digests.append(image_id);
+      }
+      r["repo_digests"] = digests;
+
+      r["parent_id"] = node.get<std::string>("ParentId");
+      if (boost::starts_with(r["parent_id"], "sha256:")) {
+        r["parent_id"].erase(0, 7);
+      }
+
+      try {
+        std::string trgt_file = "/home/uptycs/.docker/trust/tuf/docker.io/"+tag+"/metadata/targets.json";
+        pt::read_json(trgt_file,trgt_tree);
+      } catch(const std::exception& e) {
+        VLOG(1) << e.what();
+      }
+
+      try {
+        for (const auto& role : trgt_tree.get_child("signed.delegations.roles"))
+          {
+            const pt::ptree& role_info = role.second;
+            for (const auto& keyid : role_info.get_child("keyids"))
+            {
+              if(!signatures.empty() && signatures!=keyid.second.data()) signatures.append(",");
+              if(signatures!=keyid.second.data()) signatures.append(keyid.second.data());
+            }
+        }
+      } catch (const pt::ptree_error& e) {
+         VLOG(1) << e.what();
+      }
+      r["signer_id"] = signatures;
+
+      try {
+        std::string root_file = "/home/uptycs/.docker/trust/tuf/docker.io/"+tag+"/metadata/root.json";
+        pt::read_json(root_file,root_tree);
+      } catch(const std::exception& e) {
+        VLOG(1) << e.what();
+      }
+
+      try {
+        for (const auto& keyid : root_tree.get_child("signed.roles.root.keyids"))
+          {
+              if(!root_signatures.empty() && root_signatures!=keyid.second.data()) root_signatures.append(",");
+              if(root_signatures!=keyid.second.data()) root_signatures.append(keyid.second.data());
+            }
+
+      } catch (const pt::ptree_error& e) {
+         VLOG(1) << e.what();
+      }
+      r["root_id"] = root_signatures;
+
+      try {
+        for (const auto& keyid : root_tree.get_child("signed.roles.targets.keyids"))
+          {
+              if(!rep_signatures.empty() && rep_signatures!=keyid.second.data()) rep_signatures.append(",");
+              if(rep_signatures!=keyid.second.data()) rep_signatures.append(keyid.second.data());
+        }
+      } catch (const pt::ptree_error& e) {
+         VLOG(1) << e.what();
+      }
+      r["repository_id"] = rep_signatures;
+
       results.push_back(r);
     } catch (const pt::ptree_error& e) {
       VLOG(1) << "Error getting docker image details: " << e.what();

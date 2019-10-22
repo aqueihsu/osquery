@@ -39,6 +39,8 @@ function(generateOsqueryTablesNetworking)
       linux/iptc_proxy.c
       linux/process_open_sockets.cpp
       linux/routes.cpp
+      linux/docker_host_listening_ports.cpp
+      linux/docker_host_process_open_sockets.cpp
     )
 
   elseif(DEFINED PLATFORM_MACOS)

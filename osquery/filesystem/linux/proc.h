@@ -43,11 +43,36 @@ struct SocketInfo final {
 };
 typedef std::vector<SocketInfo> SocketInfoList;
 
+struct HostSocketInfo final {
+  std::string socket;
+  ino_t net_ns;
+
+  int family{0};
+  int protocol{0};
+
+  std::string local_address;
+  std::uint16_t local_port{0U};
+
+  std::string remote_address;
+  std::uint16_t remote_port{0U};
+
+  std::string unix_socket_path;
+
+  std::string state;
+};
+typedef std::vector<SocketInfo> HostSocketInfoList;
+
 struct SocketProcessInfo final {
   std::string pid;
   std::string fd;
 };
 typedef std::map<std::string, SocketProcessInfo> SocketInodeToProcessInfoMap;
+
+struct SocketHostProcessInfo final {
+  std::string pid;
+  std::string fd;
+};
+typedef std::map<std::string, SocketHostProcessInfo> SocketInodeToHostProcessInfoMap;
 
 // Linux proc protocol define to net stats file name.
 const std::map<int, std::string> kLinuxProtocolNames = {
@@ -121,6 +146,12 @@ Status procGetSocketList(int family,
                          const std::string& pid,
                          SocketInfoList& result);
 
+Status procGetHostSocketList(int family,
+                         int protocol,
+                         ino_t net_ns,
+                         const std::string& pid,
+                         HostSocketInfoList& result);
+
 /**
  * @brief Construct a map of socket inode number to process information for the
  * process that owns the socket by reading entries under /proc/<pid>/fd.
@@ -133,6 +164,9 @@ Status procGetSocketList(int family,
  */
 Status procGetSocketInodeToProcessInfoMap(const std::string& pid,
                                           SocketInodeToProcessInfoMap& result);
+
+Status procGetSocketInodeToHostProcessInfoMap(const std::string& pid,
+                                              SocketInodeToHostProcessInfoMap& result);
 
 /**
  * @brief Enumerate all pids in the system by listing pid numbers under /proc

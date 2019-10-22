@@ -4,7 +4,12 @@ schema([
     Column("id", TEXT, "Image ID"),
     Column("created", BIGINT, "Time of creation as UNIX time"),
     Column("size_bytes", BIGINT, "Size of image in bytes"),
-    Column("tags", TEXT, "Comma-separated list of repository tags")
+    Column("tags", TEXT, "Comma-separated list of repository tags"),
+    Column("repo_digests", TEXT, "Repo Digests"),
+    Column("parent_id", TEXT, "Parent Image ID"),
+    Column("signer_id", TEXT, "Signer ID"),
+    Column("root_id", TEXT, "Root ID"),
+    Column("repository_id", TEXT, "Repository ID")
 ])
 implementation("applications/docker@genImages")
 examples([
